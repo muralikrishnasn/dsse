@@ -15,6 +15,9 @@ import math
 from Crypto.Cipher import AES
 
 class DSSEClient:
+    z_value = 100
+
+
     def opener(self, filename, mode):
         file = None
         try:
@@ -56,49 +59,33 @@ class DSSEClient:
         return fbar
 
 
-    def keyedhash(self, data):
-        h = hashlib.sha256()
-        h.update(data)
-        return h.digest()
-
-
     def F(self, data):
-        return self.keyedhash(self.K1 + data)
+        return hashlib.sha256(self.K1 + data).digest()
     
     
     def G(self, data):
-        return self.keyedhash(self.K2 + data)
+        return hashlib.sha256(self.K2 + data).digest()
 
     
     def P(self, data):
-        return self.keyedhash(self.K3 + data)
+        return hashlib.sha256(self.K3 + data).digest()
     
 
-    def oracle(self, data):
-        h = hashlib.sha512()
-        h.update(data)
-        return h.digest()
-
-
     def H1(self, data):
-        return self.oracle("076c61ed3aa289f970d5477b72f0e8c9d6839a5575836eb91aad23a0ee31ac58766194b49b6c277de4357bd94cbfb5127d9fe6a94eb6ad0027722cfa9cbd67d1" + data)
+        return hashlib.sha512("076c61ed3aa289f970d5477b72f0e8c9d6839a5575836eb91aad23a0ee31ac58766194b49b6c277de4357bd94cbfb5127d9fe6a94eb6ad0027722cfa9cbd67d1" + data).digest()
     
 
     def H2(self, data):
-        return self.oracle("e2d86abcd967fccc36fad7219690f6e8fa2b85ea7631d992af2d4e940962b1225349d2dde0d31f3251d1f037d53741fd0a706fdb36d4a70ef3c44e13a3224753" + data)
+        return hashlib.sha512("e2d86abcd967fccc36fad7219690f6e8fa2b85ea7631d992af2d4e940962b1225349d2dde0d31f3251d1f037d53741fd0a706fdb36d4a70ef3c44e13a3224753" + data).digest()
 
 
-    # FIXME: if time, refactor? If so, use word hashes, too
     def filehashes(self, filename):
         id = hashlib.sha1()         # Only used to identify file, no cryptographic use
-        Ff = hashlib.sha256()
-        Gf = hashlib.sha256()
-        Pf = hashlib.sha256()
-        Ff.update(self.K1)
-        Gf.update(self.K2)
-        Pf.update(self.K3)
+        Ff = hashlib.sha256(self.K1)
+        Gf = hashlib.sha256(self.K2)
+        Pf = hashlib.sha256(self.K3)
         with open(filename,'rb') as f: 
-            for chunk in iter(lambda: f.read(128 * id.block_size), b''): 
+            for chunk in iter(lambda: f.read(128 * id.block_size), b''):
                 id.update(chunk)
                 Ff.update(chunk)
                 Gf.update(chunk)
@@ -114,6 +101,29 @@ class DSSEClient:
             if array[addr] is not None:
                 break
         return addr
+
+
+    # TODO: test
+    # We opt to use AES because obviously.
+    def SKE(self, filename):
+        iv = os.urandom(16)
+        cipher = AES.new(self.K4, AES.MODE_CFB, iv)
+        with open(filename, 'rb') as src:
+            with open(filename + ".enc", 'wb') as dst:
+                dst.write(iv)
+                for chunk in iter(lambda: src.read(AES.block_size * 128), b''):
+                    if len(chunk) != AES.block_size * 128:
+                        break
+                    dst.write(cipher.encrypt(chunk))
+                if len(chunk) == AES.block_size * 128:
+                    dst.write(cipher.encrypt(chr(16) * 16))
+                else:
+                    remainder = len(chunk) % 16
+                    if remainder == 0:
+                        remainder = 16
+                    chunk += chr(remainder) * remainder
+                    dst.write(cipher.encrypt(chunk))
+
 
 
     def __init__(self):
@@ -134,15 +144,18 @@ class DSSEClient:
 
     def Enc(self, files):
         bytes = self.totalsize(files)
-        
-        # Pre-allocated with |c|/8 + freesize where c is size of ciphertexts in bits.
-        As = [None] * (bytes + 100)
-        Ad = [None] * (bytes + 100)
+        iddb = {}
+
+        # Step 1
+        As = [None] * (bytes + DSSEClient.z_value)
+        Ad = [None] * (bytes + DSSEClient.z_value)
         Ts = {}
         Td = {}
         
+        # Steps 2 and 3, interleaved
         for filename in files:
             (id, Ff, Gf, Pf) = self.filehashes(filename)
+            iddb[id] = filename
             rp = os.urandom(32)
             H2 = self.H2(Pf + rp)
             for w in self.fbar(filename):
@@ -154,6 +167,7 @@ class DSSEClient:
                 Pw = self.P(w)
                 H1 = self.H1(Pw + r)
                 
+                ### PSEUDOCODE ###
                 # TODO: how to XOR Ts_entry?
                 # TODO: define zerostring
                 if Fw in Ts:
@@ -164,7 +178,6 @@ class DSSEClient:
                 else:
                     N1 = zerostring
                     Nstar1 = zerostring
-                
                 # TODO: build N
                 #N = 
                 #As[addr_As] = N
@@ -173,14 +186,37 @@ class DSSEClient:
                 
                 # TODO: D, update Td
                 # TODO: need to use previous D entry (perhaps!), store outside loop
-                
 
+                ### END PSEUDOCODE ###
 
-        # Build free list
-        # Fill rest of As and Ad with randomness
-        # Encrypt each file with SKE
-        # Return index and ciphertexts
+        # Step 4
+        Fz = []
+        Fpz = []
+        for idx in range(DSSEClient.z_value):
+            Fz.append(self.findusable(As))
+            Fpz.append(self.findusable(Ad))
+        Ts[None] = Fz[-1] + zerostring
         
+        # Supposed to go from Fz down to F1 but it's a random selection so it's the same.
+        for idx in range(len(Fz - 1)):
+            As[Fz[idx]] = zerostring + Fz[idx + 1] + Fpz[idx]
+        As[Fz[-1]] = zerostring + zerostring + Fpz[-1]
+
+
+        # Step 5
+        # FIXME: currently this used A LOT of entropy
+        for idx in range(len(As)):
+            if As[idx] is None:
+                As[idx] = os.urandom(64)    # FIXME: no idea how long entries are!
+            if Ad[idx] is None:
+                Ad[idx] = os.urandom(64)    # FIXME: no idea how long entries are!
+
+        # Step 6
+        for filename in files:
+            self.SKE(filename)
+        
+        # Step 7
+        # Pickle As, Ts, Ad, Td, iddb
 
     
     def SrchToken():
@@ -201,8 +237,6 @@ class DSSEClient:
 
 if __name__ == "__main__":
     dsse = DSSEClient()
-    arr = [1] * 500
-    arr[328] = None
-    print dsse.findusable(arr)
-    
+    dsse.Gen()
+    dsse.SKE('testfile')
     
