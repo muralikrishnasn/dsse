@@ -72,27 +72,27 @@ class DSSEClient:
         return fbar
 
 
-    def F(self, data):								#PRNG k x * -> k
+    def F(self, data):								#  PRNG k x * -> k
 		random.seed(self.K1 + data)
         return random.getrandbits(len(K1)*8)
     
     
-    def G(self, data):								#PRNG k x * -> *
+    def G(self, data):								# PRNG k x * -> *
 		random.seed(self.K2 + data)
-        return random.getrandbits(len(K2)*8)		# Changing to -> K do not leak info
+        return random.getrandbits(len(K2)*8)		# Changing to -> K so as not to leak info
 
     
-    def P(self, data):								#PRNG k x * -> k
+    def P(self, data):								# PRNG k x * -> k
 		random.seed(self.K3 + data)
         return random.getrandbits(len(K3)*8)
     
 	 
-    def H1(data):									#Random oracle * x * -> *
+    def H1(data):									# Random oracle * x * -> *
 		random.seed(hashlib.sha512(data))
         return random.getrandbits(len(data)*8)
     
 
-    def H2(data):									#Random oracle * x * -> *
+    def H2(data):									# Random oracle * x * -> *
 		random.seed(hashlib.sha256(data))
         return random.getrandbits(len(data)*8)
 
@@ -156,7 +156,7 @@ class DSSEClient:
 		(id, next_addr_N) = splitter(NInfo, ENC_FILENAME_SIZE)		
 		return [id, next_addr_N]										# hmm...return ID in plaintext
 	
-	def parseDelNode(nAddr, key):
+	def parseDelNode(nAddr, key):										# Yuck
 		N = Ad[int(nAddr)]
 		NInfo = N.cargo ^ H2(key, N.random)
 		(allAddrs, FKw) = splitter(NInfo, (6*STD_ADDR_SIZE))
@@ -340,12 +340,12 @@ class DSSEClient:
 				
 			si = s1																# 3h
 		
-		new_cipher_txts = []
-		for c in cipher_txts:													# Step 4
-			if (c != delF)
-				new_cipher_txts.append(c)
-			
-		TauD = [t2, t3, id]														# Step 5 ?
+	new_cipher_txts = []
+	for c in cipher_txts:													# Step 4
+		if (c != delF)
+			new_cipher_txts.append(c)
+		
+	TauD = [t2, t3, id]														# Step 5 ?
 		
 		# TODO: pickle stuff
 		
