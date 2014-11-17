@@ -12,6 +12,7 @@ import hashlib
 import random
 import pickle
 import math
+import array
 from Crypto.Cipher import AES
 
 class DSSEClient:
@@ -43,7 +44,7 @@ class DSSEClient:
 
     
     # This is the tokenizer. Replace this function whenever the input isn't text-based.
-    def fbar(self, f):
+    def fbar(self, filename):
         fbar = []
         # Match anything that isn't alphanumeric or space
         stripper = re.compile(r'([^\s\w])+')
@@ -61,23 +62,37 @@ class DSSEClient:
         return hashlib.sha256(self.K1 + data).digest()
     
     
-    def G(self, data):
-        return hashlib.sha256(self.K2 + data).digest()
+    def G(self, data, length):
+        hash = hashlib.sha256(self.K2 + data)
+        G = hash.digest()
+        while length > len(G):
+            G += hash.update(self.K2).digest()
+        return G[:length]
 
     
     def P(self, data):
         return hashlib.sha256(self.K3 + data).digest()
     
 
-    def H1(self, data):
-        return hashlib.sha512(xors(self.K1 ^ self.K2) + data).digest()
-    
+    def H1(self, data, length):
+        hash = hashlib.sha512(self.xors(self.K1, self.K2) + data)
+        H1 = hash.digest()
+        while length > len(H1):
+            hash.update(self.xors(self.K1, self.K2))
+            H1 += hash.digest()
+        return H1[:length]
+        
+        
+    def H2(self, data, length):
+        hash = hashlib.sha512(self.xors(self.K3, self.K2) + data)
+        H2 = hash.digest()
+        while length > len(H2):
+            hash.update(self.xors(self.K3, self.K2))
+            H2 += hash.digest()
+        return H2[:length]
 
-    def H2(self, data):
-        return hashlib.sha512(xors(self.K2 ^ self.K3) + data).digest()
 
-
-    def filehashes(self, filename):
+    def filehashes(self, filename, length):
         id = hashlib.sha1()         # Only used to identify file, no cryptographic use
         Ff = hashlib.sha256(self.K1)
         Gf = hashlib.sha256(self.K2)
@@ -88,15 +103,18 @@ class DSSEClient:
                 Ff.update(chunk)
                 Gf.update(chunk)
                 Pf.update(chunk)
-        return (id.digest(), Ff.digest(), Gf.digest(), Pf.digest())
+        Gfstring = Gf.digest()
+        while length > len(Gfstring):
+            Gfstring += Gf.update(self.K2).digest()
+        return (id.digest(), Ff.digest(), Gfstring[:length], Pf.digest())
 
 
     def findusable(self, array):
-        while True
-			addr = random.randrange(len(array))
-			if array[addr] is not None
-				break
-		return addr
+        while True:
+            addr = random.randrange(len(array))
+            if array[addr] is None:
+                break
+        return addr
 
 
     # TODO: test
@@ -126,20 +144,20 @@ class DSSEClient:
             return None
         a1 = array.array('B', str1)
         a2 = array.array('B', str2)
-        ret = []
-        for idx in len(a1):
-            ret[idx] = a1 ^ a2
-        return ret
+        ret = array.array('B')
+        for idx in range(len(a1)):
+            ret.append(a1[idx] ^ a2[idx])
+        return ret.tostring()
 
 
-	def pad(self, addr, len)
-		return str(addr).zfill(len)
+    def pad(self, addr, len):
+        return str(addr).zfill(len)
 
 
-	def split(self, str, splitPt):
-		lhs = entry[:splitPt] 
-		rhs = entry[splitPt:]
-		return lhs, rhs
+    def split(self, str, splitPt):
+        lhs = entry[:splitPt] 
+        rhs = entry[splitPt:]
+        return lhs, rhs
         
 
     def __init__(self, k, z):
@@ -167,95 +185,113 @@ class DSSEClient:
         # Step 1
         As = [None] * (bytes + self.z)
         Ad = [None] * (bytes + self.z)
-        addr_size = Math.ceil(Math.log(len(As), 256))
-        zerostring = "0" * addr_size
+        addr_size = int(math.ceil(math.log(len(As), 256)))
+        zerostring = "\0" * addr_size
         Ts = {}
         Td = {}
         
         # Steps 2 and 3, pass one
         for filename in files:
-            (id, Ff, Gf, Pf) = self.filehashes(filename)
+            (id, Ff, Gf, Pf) = self.filehashes(filename, addr_size)
             iddb[id] = filename
-            rp = os.urandom(self.k)
-            H2 = self.H2(Pf + rp)
+            
+            addr_d_D1 = zerostring      # Temporary Td pointer to build Di chain
+            prevD = None
+            
             for w in self.fbar(filename):
-                addr_As = self.pad(findusable(As), addr_size)    # insert new node here
-                addr_Ad = self.pad(findusable(Ad), addr_size)    # insert dual node here
+                addr_As = self.pad(self.findusable(As), addr_size)    # insert new node here
+                addr_Ad = self.pad(
+                self.findusable(Ad), addr_size)    # insert dual node here
                 r = os.urandom(self.k)
                 Fw = self.F(w)
+                Gw = self.G(w, addr_size)
                 Pw = self.P(w)
-                H1 = self.H1(Pw + r)
+                H1 = self.H1(Pw + r, addr_size)
 
                 if Fw in Ts:
                     Ts_entry = Ts[Fw]
-                    Ts_entry = self.xors(Ts_entry, self.G(w, 2 * addr_size)
+                    Ts_entry = self.xors(Ts_entry, Gw)
                     addr_s_N1, addr_d_N1 = self.split(Ts_entry, addr_size)
                 else:
                     addr_s_N1 = zerostring
                     addr_d_N1 = zerostring
-                Ts_entry = self.xors(addr_As + addr_Ad, self.G(w, 2 * addr_size))
+                Ts_entry = self.xors(addr_As + addr_Ad, Gw)
                 Ts[Fw] = Ts_entry
-                    
-                searchnode = self.xors(id + addr_s_N1, self.H1(Pw, r)) + r
+                
+                print self.xors(id + self.pad(addr_s_N1, addr_size), self.H1(Pw + r, 20 + addr_size))
+                searchnode = self.xors(id + self.pad(addr_s_N1, addr_size), self.H1(Pw + r, 20 + addr_size)) + r
                 As[int(addr_As)] = searchnode
-                
-                if Ff in Td:
-                    Td_entry = Td[Ff]
-                    Td_entry = self.xors(
-                
-                
-				encDual = (	Pad(addrdD+1, STD_ADDR_SIZE) + \			# addrdD + 1 (has to be addr_Ad, no? But why?)
-							Pad(prev_addr_Ad, STD_ADDR_SIZE) + \		# addrdN* - 1
-							Pad(next_addr_Ad, STD_ADDR_SIZE) + \		# addrdN* + 1
-							Pad(addr_As, STD_ADDR_SIZE) + \				# addrsN
-							Pad(prev_addr_As, STD_ADDR_SIZE) + \		# addrsN - 1
-							Pad(next_addr_As+1, STD_ADDR_SIZE) + \		# addrsN + 1
-							F(w) )
-							^ H2(Kf + r)
-                deletenode = 
-                
-                    
-                # TODO: build N
-                #N = 
-                #As[addr_As] = N
-                
-                # Update Ts (addrN* is addr_Ad)
-                
-                # TODO: D, update Td
-                # TODO: need to use previous D entry (perhaps!), store outside loop
 
-                ### END PSEUDOCODE ###
+                '''
+                addr_d_nextD = addr_d_D1
+                addr_d_prevNstar = zerostring                           # addr_d((N-1)*)
+                addr_d_nextNstar = addr_d_N1                            # addr_d((N+1)*)
+                addr_s_N = addr_As
+                addr_s_prevN = zerostring
+                addr_s_nextN = addr_s_N1
+                '''
+                deletenode = addr_d_D1 + zerostring + addr_d_N1 + addr_As + zerostring + addr_s_N1 + Fw
+                rp = os.urandom(self.k)
+                H2 = self.H2(Pf + rp, addr_size)
+                deletenode = self.xors(deletenode, H2)
+                deletenode += rp
+                
+                Ad[int(addr_Ad)] = deletenode
+    
+                # We get the dual of N+1. From its perspective we are N-1.
+                # Then we update its values to point to us.
+                if addr_d_N1 != zerostring:
+                    prevD = Ad[int(addr_d_N1)]       
+                    # set prevD's second field to addr_Ad and fifth field to addr_As
+                    xorstring = zerostring + addr_Ad + 2 * zerostring + addr_As + 2 * zerostring + len(self.K1) * "\0"
+                    prevD = self.xors(prevD, xorstring)
+                    Ad[int(addr_d_N1)] = prevD
+                
+                addr_d_D1 = addr_Ad     # update the temporary Td pointer
+
+            Td[Ff] = self.xors(addr_d_D1, Gf)
 
         # Step 4
         Fz = []
         Fpz = []
-        for idx in range(DSSEClient.z_value):
+        for idx in range(self.z):
             Fz.append(self.findusable(As))
             Fpz.append(self.findusable(Ad))
-        Ts[None] = Fz[-1] + zerostring
+        Ts['free'] = Fz[-1] + zerostring
         
         # Supposed to go from Fz down to F1 but it's a random selection so it's the same.
         for idx in range(len(Fz - 1)):
             As[Fz[idx]] = zerostring + Fz[idx + 1] + Fpz[idx]
         As[Fz[-1]] = zerostring + zerostring + Fpz[-1]
 
-
         # Step 5
-        # FIXME: currently this used A LOT of entropy
         for idx in range(len(As)):
             if As[idx] is None:
-                As[idx] = os.urandom(64)    # FIXME: no idea how long entries are!
+                As[idx] = os.urandom(2 * addr_size)
             if Ad[idx] is None:
-                Ad[idx] = os.urandom(64)    # FIXME: no idea how long entries are!
+                Ad[idx] = os.urandom(6 * addr_size + 2 * self.k)
 
         # Step 6
         for filename in files:
             self.SKE(filename)
-        
-        # Step 7
-        # Pickle As, Ts, Ad, Td, iddb
 
-    
+        # Step 7
+        with open("as.db", "wb") as Asdb:
+            pickle.dump(As, Asdb)
+        
+        with open("ts.db", "wb") as Tsdb:
+            pickle.dump(Ts, Tsdb)
+
+        with open("ad.db", "wb") as Addb:
+            pickle.dump(Ad, Addb)
+
+        with open("td.db", "wb") as Tddb:
+            pickle.dump(Td, Tddb)
+
+        with open("id.db", "wb") as IDdb:
+            pickle.dump(iddb, IDdb)
+
+
     def SrchToken():
         pass
 
@@ -273,7 +309,7 @@ class DSSEClient:
 
 
 if __name__ == "__main__":
-    dsse = DSSEClient()
+    dsse = DSSEClient(32, 100)
     dsse.Gen()
-    dsse.SKE('testfile')
+    dsse.Enc(['file1', 'file2'])
     
