@@ -13,6 +13,7 @@ import random
 import pickle
 import math
 import array
+import string
 from Crypto.Cipher import AES
 
 class DSSEClient:
@@ -62,12 +63,12 @@ class DSSEClient:
         return hashlib.sha256(self.K1 + data).digest()
     
     
-    def G(self, data, length):
+    def G(self, data):
         hash = hashlib.sha256(self.K2 + data)
         G = hash.digest()
-        while length > len(G):
+        while 2 * self.addr_size > len(G):
             G += hash.update(self.K2).digest()
-        return G[:length]
+        return G[:2 * self.addr_size]
 
     
     def P(self, data):
@@ -119,7 +120,7 @@ class DSSEClient:
 
     # TODO: test
     # We opt to use AES because it is a well-vetted standard.
-    def SKE(self, filename):
+    def SKEEnc(self, filename):
         iv = os.urandom(16)
         cipher = AES.new(self.K4, AES.MODE_CFB, iv)
         with open(filename, 'rb') as src:
@@ -137,10 +138,26 @@ class DSSEClient:
                         remainder = 16
                     chunk += chr(remainder) * remainder
                     dst.write(cipher.encrypt(chunk))
-
+    
+    
+    def SKEDec(self, filename):
+        with open(filename, 'rb') as src:
+            #with open(string.strip(filename, ".enc"), 'wb+') as dst:
+            with open("testoutput", 'wb+') as dst:
+                iv = src.read(16)
+                cipher = AES.new(self.K4, AES.MODE_CFB, iv)
+                for chunk in iter(lambda: src.read(AES.block_size * 128), b''):
+                    dst.write(cipher.decrypt(chunk))
+                dst.seek(-1, os.SEEK_END)
+                lastbyte = dst.read(1)
+                dst.seek(-int(lastbyte.encode('hex'), 16), os.SEEK_END)
+                dst.truncate()
+                
 
     def xors(self, str1, str2):
         if len(str1) != len(str2):
+            print "Strings of unequal length: {} and {}".format(len(str1), len(str2))
+            test = 0/0
             return None
         a1 = array.array('B', str1)
         a2 = array.array('B', str2)
@@ -150,11 +167,11 @@ class DSSEClient:
         return ret.tostring()
 
 
-    def pad(self, addr, len):
-        return str(addr).zfill(len)
+    def pad(self, addr):
+        return str(addr).zfill(self.addr_size)
 
 
-    def split(self, str, splitPt):
+    def split(self, entry, splitPt):
         lhs = entry[:splitPt] 
         rhs = entry[splitPt:]
         return lhs, rhs
@@ -167,6 +184,7 @@ class DSSEClient:
         self.K4 = 0
         self.k = k
         self.z = z
+        self.id_size = 20       # SHA1 is used for file ID and is 20 bytes long
     
 
     def Gen(self):
@@ -185,8 +203,9 @@ class DSSEClient:
         # Step 1
         As = [None] * (bytes + self.z)
         Ad = [None] * (bytes + self.z)
-        addr_size = int(math.ceil(math.log(len(As), 256)))
+        addr_size = int(math.ceil(math.log(len(As), 10)))
         zerostring = "\0" * addr_size
+        self.addr_size = addr_size
         Ts = {}
         Td = {}
         
@@ -196,15 +215,13 @@ class DSSEClient:
             iddb[id] = filename
             
             addr_d_D1 = zerostring      # Temporary Td pointer to build Di chain
-            prevD = None
             
             for w in self.fbar(filename):
-                addr_As = self.pad(self.findusable(As), addr_size)    # insert new node here
-                addr_Ad = self.pad(
-                self.findusable(Ad), addr_size)    # insert dual node here
+                addr_As = self.pad(self.findusable(As))    # insert new node here
+                addr_Ad = self.pad(self.findusable(Ad))    # insert dual node here
                 r = os.urandom(self.k)
                 Fw = self.F(w)
-                Gw = self.G(w, addr_size)
+                Gw = self.G(w)
                 Pw = self.P(w)
                 H1 = self.H1(Pw + r, addr_size)
 
@@ -215,11 +232,11 @@ class DSSEClient:
                 else:
                     addr_s_N1 = zerostring
                     addr_d_N1 = zerostring
+
                 Ts_entry = self.xors(addr_As + addr_Ad, Gw)
                 Ts[Fw] = Ts_entry
-                
-                print self.xors(id + self.pad(addr_s_N1, addr_size), self.H1(Pw + r, 20 + addr_size))
-                searchnode = self.xors(id + self.pad(addr_s_N1, addr_size), self.H1(Pw + r, 20 + addr_size)) + r
+
+                searchnode = self.xors(id + self.pad(addr_s_N1), self.H1(Pw + r, 20 + addr_size)) + r
                 As[int(addr_As)] = searchnode
 
                 '''
@@ -232,9 +249,9 @@ class DSSEClient:
                 '''
                 deletenode = addr_d_D1 + zerostring + addr_d_N1 + addr_As + zerostring + addr_s_N1 + Fw
                 rp = os.urandom(self.k)
-                H2 = self.H2(Pf + rp, addr_size)
-                deletenode = self.xors(deletenode, H2)
-                deletenode += rp
+                H2 = self.H2(Pf + rp, 6 * addr_size + self.k)
+
+                deletenode = self.xors(deletenode, H2) + rp
                 
                 Ad[int(addr_Ad)] = deletenode
     
@@ -243,7 +260,7 @@ class DSSEClient:
                 if addr_d_N1 != zerostring:
                     prevD = Ad[int(addr_d_N1)]       
                     # set prevD's second field to addr_Ad and fifth field to addr_As
-                    xorstring = zerostring + addr_Ad + 2 * zerostring + addr_As + 2 * zerostring + len(self.K1) * "\0"
+                    xorstring = zerostring + addr_Ad + 2 * zerostring + addr_As + zerostring + len(self.K1) * 2 * "\0"
                     prevD = self.xors(prevD, xorstring)
                     Ad[int(addr_d_N1)] = prevD
                 
@@ -257,12 +274,13 @@ class DSSEClient:
         for idx in range(self.z):
             Fz.append(self.findusable(As))
             Fpz.append(self.findusable(Ad))
-        Ts['free'] = Fz[-1] + zerostring
+        Ts['free'] = self.pad(Fz[-1]) + zerostring
         
         # Supposed to go from Fz down to F1 but it's a random selection so it's the same.
-        for idx in range(len(Fz - 1)):
-            As[Fz[idx]] = zerostring + Fz[idx + 1] + Fpz[idx]
-        As[Fz[-1]] = zerostring + zerostring + Fpz[-1]
+        freezerostring = int(math.ceil(math.log(len(files), 10))) * "\0"
+        for idx in range(len(Fz) - 1):
+            As[Fz[idx]] = freezerostring + self.pad(Fz[idx + 1]) + self.pad(Fpz[idx])
+        As[Fz[-1]] = freezerostring + zerostring + self.pad(Fpz[-1])
 
         # Step 5
         for idx in range(len(As)):
@@ -273,7 +291,7 @@ class DSSEClient:
 
         # Step 6
         for filename in files:
-            self.SKE(filename)
+            self.SKEEnc(filename)
 
         # Step 7
         with open("as.db", "wb") as Asdb:
@@ -292,24 +310,27 @@ class DSSEClient:
             pickle.dump(iddb, IDdb)
 
 
-    def SrchToken():
-        pass
+    # TODO: do we always have the addr_size instantiated?
+    def SrchToken(self, w):
+        return (self.F(w), self.G(w), self.P(w))
 
 
     def AddToken():
         pass
 
 
-    def DelToken():
-        pass
+    def DelToken(self, filename):
+        (id, Ff, Gf, Pf) = self.filehashes(filename)
+        return (Ff, Gf, Pf, id)
 
 
-    def Dec():
-        pass
+    def Dec(self, filename):
+        self.SKEDec(filename)
 
 
 if __name__ == "__main__":
     dsse = DSSEClient(32, 100)
     dsse.Gen()
     dsse.Enc(['file1', 'file2'])
+    dsse.Dec('file1.enc')
     
