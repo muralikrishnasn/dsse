@@ -15,8 +15,6 @@ import math
 from Crypto.Cipher import AES
 
 class DSSEClient:
-    z_value = 100
-
 
     def opener(self, filename, mode):
         file = None
@@ -72,11 +70,11 @@ class DSSEClient:
     
 
     def H1(self, data):
-        return hashlib.sha512("076c61ed3aa289f970d5477b72f0e8c9d6839a5575836eb91aad23a0ee31ac58766194b49b6c277de4357bd94cbfb5127d9fe6a94eb6ad0027722cfa9cbd67d1" + data).digest()
+        return hashlib.sha512(xors(self.K1 ^ self.K2) + data).digest()
     
 
     def H2(self, data):
-        return hashlib.sha512("e2d86abcd967fccc36fad7219690f6e8fa2b85ea7631d992af2d4e940962b1225349d2dde0d31f3251d1f037d53741fd0a706fdb36d4a70ef3c44e13a3224753" + data).digest()
+        return hashlib.sha512(xors(self.K2 ^ self.K3) + data).digest()
 
 
     def filehashes(self, filename):
@@ -94,17 +92,15 @@ class DSSEClient:
 
 
     def findusable(self, array):
-        arrlen = len(array)
-        rndbytes = int(math.ceil(math.log(arrlen, 256)))
-        while True:
-            addr = int(os.urandom(rndbytes).encode('hex'),16) % arrlen
-            if array[addr] is not None:
-                break
-        return addr
+        while True
+			addr = random.randrange(len(array))
+			if array[addr] is not None
+				break
+		return addr
 
 
     # TODO: test
-    # We opt to use AES because obviously.
+    # We opt to use AES because it is a well-vetted standard.
     def SKE(self, filename):
         iv = os.urandom(16)
         cipher = AES.new(self.K4, AES.MODE_CFB, iv)
@@ -125,20 +121,42 @@ class DSSEClient:
                     dst.write(cipher.encrypt(chunk))
 
 
+    def xors(self, str1, str2):
+        if len(str1) != len(str2):
+            return None
+        a1 = array.array('B', str1)
+        a2 = array.array('B', str2)
+        ret = []
+        for idx in len(a1):
+            ret[idx] = a1 ^ a2
+        return ret
 
-    def __init__(self):
+
+	def pad(self, addr, len)
+		return str(addr).zfill(len)
+
+
+	def split(self, str, splitPt):
+		lhs = entry[:splitPt] 
+		rhs = entry[splitPt:]
+		return lhs, rhs
+        
+
+    def __init__(self, k, z):
         self.K1 = 0
         self.K2 = 0
         self.K3 = 0
         self.K4 = 0
+        self.k = k
+        self.z = z
     
 
     def Gen(self):
-        self.K1 = os.urandom(32)
-        self.K2 = os.urandom(32)
-        self.K3 = os.urandom(32)
-        self.K4 = os.urandom(32)
-        self.keys = [self.K1, self.K2, self.K3, self.K4]
+        self.K1 = os.urandom(self.k)
+        self.K2 = os.urandom(self.k)
+        self.K3 = os.urandom(self.k)
+        self.K4 = os.urandom(self.k)
+        self.keys = (self.K1, self.K2, self.K3, self.K4)
         return self.keys
 
 
@@ -147,37 +165,56 @@ class DSSEClient:
         iddb = {}
 
         # Step 1
-        As = [None] * (bytes + DSSEClient.z_value)
-        Ad = [None] * (bytes + DSSEClient.z_value)
+        As = [None] * (bytes + self.z)
+        Ad = [None] * (bytes + self.z)
+        addr_size = Math.ceil(Math.log(len(As), 256))
+        zerostring = "0" * addr_size
         Ts = {}
         Td = {}
         
-        # Steps 2 and 3, interleaved
+        # Steps 2 and 3, pass one
         for filename in files:
             (id, Ff, Gf, Pf) = self.filehashes(filename)
             iddb[id] = filename
-            rp = os.urandom(32)
+            rp = os.urandom(self.k)
             H2 = self.H2(Pf + rp)
             for w in self.fbar(filename):
-                addr_As = findusable(As)    # insert new node here
-                addr_Ad = findusable(Ad)    # insert dual node here
-                r = os.urandom(32)
+                addr_As = self.pad(findusable(As), addr_size)    # insert new node here
+                addr_Ad = self.pad(findusable(Ad), addr_size)    # insert dual node here
+                r = os.urandom(self.k)
                 Fw = self.F(w)
-                Gw = self.G(w)
                 Pw = self.P(w)
                 H1 = self.H1(Pw + r)
-                
-                ### PSEUDOCODE ###
-                # TODO: how to XOR Ts_entry?
-                # TODO: define zerostring
+
                 if Fw in Ts:
                     Ts_entry = Ts[Fw]
-                    Ts_entry ^= Gw
-                    N1 = Ts_entry[0]
-                    Nstar1 = Ts_entry[1]
+                    Ts_entry = self.xors(Ts_entry, self.G(w, 2 * addr_size)
+                    addr_s_N1, addr_d_N1 = self.split(Ts_entry, addr_size)
                 else:
-                    N1 = zerostring
-                    Nstar1 = zerostring
+                    addr_s_N1 = zerostring
+                    addr_d_N1 = zerostring
+                Ts_entry = self.xors(addr_As + addr_Ad, self.G(w, 2 * addr_size))
+                Ts[Fw] = Ts_entry
+                    
+                searchnode = self.xors(id + addr_s_N1, self.H1(Pw, r)) + r
+                As[int(addr_As)] = searchnode
+                
+                if Ff in Td:
+                    Td_entry = Td[Ff]
+                    Td_entry = self.xors(
+                
+                
+				encDual = (	Pad(addrdD+1, STD_ADDR_SIZE) + \			# addrdD + 1 (has to be addr_Ad, no? But why?)
+							Pad(prev_addr_Ad, STD_ADDR_SIZE) + \		# addrdN* - 1
+							Pad(next_addr_Ad, STD_ADDR_SIZE) + \		# addrdN* + 1
+							Pad(addr_As, STD_ADDR_SIZE) + \				# addrsN
+							Pad(prev_addr_As, STD_ADDR_SIZE) + \		# addrsN - 1
+							Pad(next_addr_As+1, STD_ADDR_SIZE) + \		# addrsN + 1
+							F(w) )
+							^ H2(Kf + r)
+                deletenode = 
+                
+                    
                 # TODO: build N
                 #N = 
                 #As[addr_As] = N

@@ -75,13 +75,13 @@ class DSSEClient:
     def F(self, data):								#  PRNG k x * -> k
 		random.seed(self.K1 + data)
         return random.getrandbits(len(K1)*8)
-    
-    
+
+
     def G(self, data):								# PRNG k x * -> *
 		random.seed(self.K2 + data)
         return random.getrandbits(len(K2)*8)		# Changing to -> K so as not to leak info
 
-    
+
     def P(self, data):								# PRNG k x * -> k
 		random.seed(self.K3 + data)
         return random.getrandbits(len(K3)*8)
@@ -141,21 +141,23 @@ class DSSEClient:
         self.keys = [self.K1, self.K2, self.K3, self.K4]
         return self.keys
 		
-	def Pad(self, addr, totalByteSize)
-		return str(addr).zfill(totalByteSize - len(str(addr)))
+	def pad(self, addr, len)
+		return str(addr).zfill(len)
 
 		
 	class Node:
 		def __init__(self, cargo, random):
 			self.cargo= cargo
 			self.random  = random
-	
+
+
 	def parseSrcNode(nAddr, key):
 		N = As[int(nAddr)]
 		NInfo = N.cargo ^ H1(key, N.random)
 		(id, next_addr_N) = splitter(NInfo, ENC_FILENAME_SIZE)		
 		return [id, next_addr_N]										# hmm...return ID in plaintext
-	
+
+
 	def parseDelNode(nAddr, key):										# Yuck
 		N = Ad[int(nAddr)]
 		NInfo = N.cargo ^ H2(key, N.random)
@@ -166,7 +168,8 @@ class DSSEClient:
 		(prev_NstarAddr, next_NstarAddr) = splitter(prev_next_NstarAddr, (STD_ADDR_SIZE))
 		(prev_NAddr, next_NAddr) = splitter(prev_next_NAddr, (STD_ADDR_SIZE))
 		return [NStarAddr, prev_NstarAddr, next_NstarAddr, NAddr, prev_NAddr, next_NAddr, FKw]
-	
+
+
     def Enc(self, files):
         bytes = self.totalsize(files)
         iddb = {}
