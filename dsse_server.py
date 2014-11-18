@@ -6,38 +6,30 @@
 Server side implementation of DSSE
 """
 
-import sys
 import os
-import os.path
-import re
 import hashlib
 import random
 import pickle
 import math
 
-'''
-    H1: SHA512
-    H2: SHA512 but with a twist?
-    id_i: md5    (only identifies, doesn't need to be cryptographically secure)
-    F, G, P: SHA256
-    SKE: AES
-'''
-
 class DSSEServer:
-    def opener(self, filename, mode):
-        file = None
-        try:
-            file = open(filename, mode)
-        except IOError:
-            print "Could not open {0} for reading.".format(filename)
-        return file
-    
-    
-    def closer(self, file):
-        try:
-            file.close()
-        except IOError:
-            print "Could not close file."
+
+    # After the client is done mutating the databases they should be written back to file
+    def updatedatabases(self):
+        with open("as.db", "wb") as Asdb:
+            pickle.dump(self.As, Asdb)
+        
+        with open("ts.db", "wb") as Tsdb:
+            pickle.dump(self.Ts, Tsdb)
+
+        with open("ad.db", "wb") as Addb:
+            pickle.dump(self.Ad, Addb)
+
+        with open("td.db", "wb") as Tddb:
+            pickle.dump(self.Td, Tddb)
+
+        with open("id.db", "wb") as IDdb:
+            pickle.dump(self.iddb, IDdb)
 
 
     def xor(self, str1, str2):
@@ -103,10 +95,10 @@ class DSSEServer:
 
     def __init__(self, k, addr_size):
         self.k = k
-        self.As = pickle.load(open("As.db", 'rb'))
-        self.Ad = pickle.load(open("Ad.db", 'rb'))
-        self.Ts = pickle.load(open("Ts.db", 'rb'))
-        self.Td = pickle.load(open("Td.db", 'rb'))
+        self.As = pickle.load(open("as.db", 'rb'))
+        self.Ad = pickle.load(open("ad.db", 'rb'))
+        self.Ts = pickle.load(open("ts.db", 'rb'))
+        self.Td = pickle.load(open("td.db", 'rb'))
         self.iddb = pickle.load(open("id.db", 'rb'))
         self.addr_size = int(math.ceil(math.log(len(self.As), 10)))
 
@@ -129,9 +121,6 @@ class DSSEServer:
         if t1 in Td:
             return      # file ID already in the database, let's go home
             
-        # Inline: get the first free element, strip the last two addr_size elements and
-        # return the length of the remaining string. This is the log #f zerostring padding
-        freepadding = len(As[int(Ts['free'][:self.addr_size])][:-2*self.addr_size])
         zerostring = "\0" * self.addr_size
         prev_phistar = self.pad(0)
         for L_i in lamda:
@@ -140,10 +129,10 @@ class DSSEServer:
             # 2a
             phi = self.split(self.Ts['free'], self.addr_size)[0]
             # Fetch entry in freelist, remove padding, split into both entries
-            prev_phi, phistar = self.split(self.split(As[int(phi)], freepadding)[1], self.addr_size)
+            prev_phi, phistar = self.split(As[int(phi)], self.addr_size)
             
             # 2b
-            Ts['free'] = self.pad(prev_phi) + zerostring
+            Ts['free'] = prev_phi + zerostring
 
             # 2c
             a1, a1star = self.split(self.xor(self.Ts[Fw], Gw), self.addr_size)
@@ -204,7 +193,7 @@ class DSSEServer:
             addr_D = a1
 
         del self.Td[t1]
-
+        del self.iddb[id]
 
 if __name__ == "__main__":
     dsse = DSSEServer(32, 5)

@@ -5,7 +5,6 @@
 Client side implementation of DSSE
 '''
 
-import sys
 import os
 import re
 import hashlib
@@ -231,14 +230,6 @@ class DSSEClient:
                 searchnode = self.xor(id + self.pad(addr_s_N1), H1) + r
                 As[int(addr_As)] = searchnode
 
-                '''
-                addr_d_nextD = addr_d_D1
-                addr_d_prevNstar = zerostring                           # addr_d((N-1)*)
-                addr_d_nextNstar = addr_d_N1                            # addr_d((N+1)*)
-                addr_s_N = addr_As
-                addr_s_prevN = zerostring
-                addr_s_nextN = addr_s_N1
-                '''
                 deletenode = addr_d_D1 + zerostring + addr_d_N1 + addr_As + zerostring + addr_s_N1 + Fw
                 rp = os.urandom(self.k)
                 H2 = self.H2(Pf + rp)
@@ -269,10 +260,9 @@ class DSSEClient:
         Ts['free'] = self.pad(Fz[-1]) + zerostring
         
         # Supposed to go from Fz down to F1 but it's a random selection so it's the same.
-        freezerostring = int(math.ceil(math.log(len(files), 10))) * "\0"
         for idx in range(len(Fz) - 1):
-            As[Fz[idx]] = freezerostring + self.pad(Fz[idx + 1]) + self.pad(Fpz[idx])
-        As[Fz[-1]] = freezerostring + zerostring + self.pad(Fpz[-1])
+            As[Fz[idx]] = self.pad(Fz[idx + 1]) + self.pad(Fpz[idx])
+        As[Fz[-1]] = zerostring + self.pad(Fpz[-1])
 
         # Step 5
         for idx in range(len(As)):
