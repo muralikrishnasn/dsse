@@ -18,22 +18,7 @@ from Crypto.Cipher import AES
 
 class DSSEClient:
 
-    def opener(self, filename, mode):
-        file = None
-        try:
-            file = open(filename, mode)
-        except IOError:
-            print "Could not open {0} for reading.".format(filename)
-        return file
-    
-    
-    def closer(self, file):
-        try:
-            file.close()
-        except IOError:
-            print "Could not close file."
-    
-    
+    # Enumerate the total size of the     
     def totalsize(self, files):
         sum = 0
         for file in files:
@@ -107,7 +92,7 @@ class DSSEClient:
         Gfstring = Gf.digest()
         while length > len(Gfstring):
             Gfstring += Gf.update(self.K2).digest()
-        return (id.digest(), Ff.digest(), Gfstring[:length], Pf.digest())
+        return (Ff.digest(), Gfstring[:length], Pf.digest(), id.digest())
 
 
     def findusable(self, array):
@@ -118,8 +103,8 @@ class DSSEClient:
         return addr
 
 
-    # TODO: test
-    # We opt to use AES because it is a well-vetted standard.
+    # File encryption is done with AES because it is probably the best-known and most-vetted
+    # symmetric key algorithm available today. We employ PyCrypto to do the heavy lifting.
     def SKEEnc(self, filename):
         iv = os.urandom(16)
         cipher = AES.new(self.K4, AES.MODE_CFB, iv)
@@ -139,15 +124,17 @@ class DSSEClient:
                     chunk += chr(remainder) * remainder
                     dst.write(cipher.encrypt(chunk))
     
-    
+
+    # Adaptation of SKEDec to apply AES decryption to the file specified in 'filename'    
     def SKEDec(self, filename):
         with open(filename, 'rb') as src:
-            #with open(string.strip(filename, ".enc"), 'wb+') as dst:
-            with open("testoutput", 'wb+') as dst:
+            with open(string.strip(filename, ".enc") + ".dec", 'wb+') as dst:
                 iv = src.read(16)
                 cipher = AES.new(self.K4, AES.MODE_CFB, iv)
                 for chunk in iter(lambda: src.read(AES.block_size * 128), b''):
                     dst.write(cipher.decrypt(chunk))
+
+                # Remove padding
                 dst.seek(-1, os.SEEK_END)
                 lastbyte = dst.read(1)
                 dst.seek(-int(lastbyte.encode('hex'), 16), os.SEEK_END)
@@ -155,6 +142,7 @@ class DSSEClient:
                 
 
     def xors(self, str1, str2):
+        # FIXME: this is for testing purposes and should be changed/removed for final
         if len(str1) != len(str2):
             print "Strings of unequal length: {} and {}".format(len(str1), len(str2))
             test = 0/0
@@ -196,6 +184,7 @@ class DSSEClient:
         return self.keys
 
 
+    # Does it make sense to refactor this beast?
     def Enc(self, files):
         bytes = self.totalsize(files)
         iddb = {}
@@ -204,14 +193,14 @@ class DSSEClient:
         As = [None] * (bytes + self.z)
         Ad = [None] * (bytes + self.z)
         addr_size = int(math.ceil(math.log(len(As), 10)))
-        zerostring = "\0" * addr_size
         self.addr_size = addr_size
+        zerostring = "\0" * self.addr_size
         Ts = {}
         Td = {}
         
         # Steps 2 and 3, pass one
         for filename in files:
-            (id, Ff, Gf, Pf) = self.filehashes(filename, addr_size)
+            (Ff, Gf, Pf, id) = self.filehashes(filename, addr_size)
             iddb[id] = filename
             
             addr_d_D1 = zerostring      # Temporary Td pointer to build Di chain
@@ -223,7 +212,7 @@ class DSSEClient:
                 Fw = self.F(w)
                 Gw = self.G(w)
                 Pw = self.P(w)
-                H1 = self.H1(Pw + r, addr_size)
+                H1 = self.H1(Pw + r, self.addr_size)
 
                 if Fw in Ts:
                     Ts_entry = Ts[Fw]
@@ -315,13 +304,28 @@ class DSSEClient:
         return (self.F(w), self.G(w), self.P(w))
 
 
-    def AddToken():
-        pass
+    # The function should return the token and cf, but we have cf on disk. Caller can
+    # decide how to transfer the ciphertext to the server.
+    def AddToken(self, filename):
+        # Get ALL the hashes!
+        (Ff, Gf, Pf, id) = self.filehashes(filename)
+        lamda = []
+        zerostring = "\0" * self.addr_size
+        for w in self.fbar(filename):
+            r = os.urandom(self.k)
+            rp = os.urandom(self.k)
+            Fw = self.F(w)
+            Gw = self.G(w)
+            Pw = self.P(w)
+            H1 = self.H1(Pw + r, self.addr_size)
+            lamda_i = Fw + Gw + self.xors(id + zerostring, self.H1(Pw + r, 20 + self.addr_size)) + r
+                        + self.xors(6 * zerostring + Fw, self.H2(Pf + rp, 6 * addr_size + self.k) + rp
+        self.SKEEnc(filename)
+        return (Ff, Gf, lamda)
 
 
     def DelToken(self, filename):
-        (id, Ff, Gf, Pf) = self.filehashes(filename)
-        return (Ff, Gf, Pf, id)
+        return self.filehashes(filename)
 
 
     def Dec(self, filename):
