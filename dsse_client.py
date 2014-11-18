@@ -81,13 +81,12 @@ class DSSEClient:
 
 
     def filehashes(self, filename, length):
-        id = hashlib.sha1()         # Only used to identify file, no cryptographic use
+        id = hashlib.sha1(filename)     # Only used to identify file, no cryptographic use
         Ff = hashlib.sha256(self.K1)
         Gf = hashlib.sha256(self.K2)
         Pf = hashlib.sha256(self.K3)
         with open(filename,'rb') as f: 
             for chunk in iter(lambda: f.read(128 * id.block_size), b''):
-                id.update(chunk)
                 Ff.update(chunk)
                 Gf.update(chunk)
                 Pf.update(chunk)

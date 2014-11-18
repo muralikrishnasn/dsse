@@ -192,8 +192,11 @@ class DSSEServer:
             
             addr_D = a1
 
+        idtodelete = self.iddb[id]  # this is a SHA1 hash of the filename. We don't know
+                                    # all the filenames, so we let the caller worry about it.
         del self.Td[t1]
         del self.iddb[id]
+        return idtodelete
 
 if __name__ == "__main__":
     dsse = DSSEServer(32, 5)
