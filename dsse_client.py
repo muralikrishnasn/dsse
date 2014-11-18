@@ -60,22 +60,25 @@ class DSSEClient:
         return hashlib.sha256(self.K3 + data).digest()
     
 
-    def H1(self, data, length):
-        hash = hashlib.sha512(self.xors(self.K1, self.K2) + data)
+    # FIXME: it doesn't work to add the secret keys since server needs H1, too.
+    #        So, do we want/need this static seed at all?
+    def H1(self, data):
+        hash = hashlib.sha512("4f6a3f7e2ea5729b7a02549f96df9fec" + data)
         H1 = hash.digest()
-        while length > len(H1):
-            hash.update(self.xors(self.K1, self.K2))
+        while 20 + self.addr_size > len(H1):
+            hash.update(data)
             H1 += hash.digest()
-        return H1[:length]
+        return H1[:20 + self.addr_size]
         
-        
+    
+    # FIXME: see H1
     def H2(self, data, length):
-        hash = hashlib.sha512(self.xors(self.K3, self.K2) + data)
+        hash = hashlib.sha512("8546d8f066cc3a4715f377f40eb3f034" + data)
         H2 = hash.digest()
-        while length > len(H2):
-            hash.update(self.xors(self.K3, self.K2))
+        while 6 * self.addr_size + self.k > len(H2):
+            hash.update(data)
             H2 += hash.digest()
-        return H2[:length]
+        return H2[:6 * self.addr_size + self.k]
 
 
     def filehashes(self, filename, length):
@@ -95,6 +98,7 @@ class DSSEClient:
         return (Ff.digest(), Gfstring[:length], Pf.digest(), id.digest())
 
 
+    # FIXME: probably need to exclude zero, since it'd be interpreted as zerostring?
     def findusable(self, array):
         while True:
             addr = random.randrange(len(array))
@@ -212,12 +216,12 @@ class DSSEClient:
                 Fw = self.F(w)
                 Gw = self.G(w)
                 Pw = self.P(w)
-                H1 = self.H1(Pw + r, self.addr_size)
+                H1 = self.H1(Pw + r)
 
                 if Fw in Ts:
                     Ts_entry = Ts[Fw]
                     Ts_entry = self.xors(Ts_entry, Gw)
-                    addr_s_N1, addr_d_N1 = self.split(Ts_entry, addr_size)
+                    addr_s_N1, addr_d_N1 = self.split(Ts_entry, self.addr_size)
                 else:
                     addr_s_N1 = zerostring
                     addr_d_N1 = zerostring
@@ -225,7 +229,7 @@ class DSSEClient:
                 Ts_entry = self.xors(addr_As + addr_Ad, Gw)
                 Ts[Fw] = Ts_entry
 
-                searchnode = self.xors(id + self.pad(addr_s_N1), self.H1(Pw + r, 20 + addr_size)) + r
+                searchnode = self.xors(id + self.pad(addr_s_N1), H1) + r
                 As[int(addr_As)] = searchnode
 
                 '''
@@ -238,7 +242,7 @@ class DSSEClient:
                 '''
                 deletenode = addr_d_D1 + zerostring + addr_d_N1 + addr_As + zerostring + addr_s_N1 + Fw
                 rp = os.urandom(self.k)
-                H2 = self.H2(Pf + rp, 6 * addr_size + self.k)
+                H2 = self.H2(Pf + rp)
 
                 deletenode = self.xors(deletenode, H2) + rp
                 
@@ -317,9 +321,10 @@ class DSSEClient:
             Fw = self.F(w)
             Gw = self.G(w)
             Pw = self.P(w)
-            H1 = self.H1(Pw + r, self.addr_size)
-            lamda_i = Fw + Gw + self.xors(id + zerostring, self.H1(Pw + r, 20 + self.addr_size)) + r
-                        + self.xors(6 * zerostring + Fw, self.H2(Pf + rp, 6 * addr_size + self.k) + rp
+            H1 = self.H1(Pw + r)
+            H2 = self.H2(Pf + rp)
+            lamda_i = Fw + Gw + self.xors(id + zerostring, H1) + r
+                        + self.xors(6 * zerostring + Fw, H2) + rp
         self.SKEEnc(filename)
         return (Ff, Gf, lamda)
 
