@@ -69,6 +69,15 @@ class DSSEServer:
         return H1[:20 + self.addr_size]
 
 
+    def H2(self, data, length):
+        hash = hashlib.sha512("8546d8f066cc3a4715f377f40eb3f034" + data)
+        H2 = hash.digest()
+        while 6 * self.addr_size + self.k > len(H2):
+            hash.update(data)
+            H2 += hash.digest()
+        return H2[:6 * self.addr_size + self.k]
+
+
     def parselamda(self, lamda):
         Fw, lamda = self.split(lamda, self.addr_size)
         Gw, lamda = self.split(lamda, self.addr_size)
@@ -76,6 +85,16 @@ class DSSEServer:
         r, lamda = self.split(lamda, self.k)
         Ad_entry, rp = self.split(lamda, 6 * self.addr_size + self.k)
         return Fw, Gw, As_entry, r, Ad_entry, rp
+
+
+    def parsedeletenode(self, node):
+        a1, node = self.split(node, self.addr_size)
+        a2, node = self.split(node, self.addr_size)
+        a3, node = self.split(node, self.addr_size)
+        a4, node = self.split(node, self.addr_size)
+        a5, node = self.split(node, self.addr_size)
+        a6, mu = self.split(node, self.addr_size)
+        return a1, a2, a3, a4, a5, a6, mu
 
 
     def pad(self, addr):
@@ -121,7 +140,7 @@ class DSSEServer:
             # 2a
             phi = self.split(self.Ts['free'], self.addr_size)[0]
             # Fetch entry in freelist, remove padding, split into both entries
-            prev_phi, phistar = self.split(self.split(As[phi], freepadding)[1], self.addr_size)
+            prev_phi, phistar = self.split(self.split(As[int(phi)], freepadding)[1], self.addr_size)
             
             # 2b
             Ts['free'] = self.pad(prev_phi) + zerostring
@@ -130,17 +149,17 @@ class DSSEServer:
             a1, a1star = self.split(self.xor(self.Ts[Fw], Gw), self.addr_size)
             
             # 2d
-            self.As[phi] = self.xor(As_entry, zerostring + self.pad(a1)) + r
+            self.As[int(phi)] = self.xor(As_entry, zerostring + self.pad(a1)) + r
             
             # 2e
             self.Ts[Fw] = self.xor(phi + phistar, Gw)
             
             # 2f
-            self.Ad[a1star] = self.xor(self.Ad[a1star], zerostring + phistar + \
+            self.Ad[int(a1star)] = self.xor(self.Ad[int(a1star)], zerostring + phistar + \
                               2 * zerostring + phi + zerostring + + "\0" * self.k * 2)
 
             # 2g
-            self.Ad[phistar] = self.xor(Ad_entry, prev_phistar + zerostring + a1star + \
+            self.Ad[int(phistar)] = self.xor(Ad_entry, prev_phistar + zerostring + a1star + \
                                phi + zerostring + a1 + Fw) + rp
         
         # 2h
@@ -148,10 +167,45 @@ class DSSEServer:
         # Step 3 is performed out-of-band by simply storing a file. Caller needs to do this.
 
     
-    def Del():
-        pass
+    def Del(self, tau):
+        (t1, t2, t3, id) = tau
+        if t1 not in self.Td:
+            return
+        
+        zerostring = "\0" * self.addr_size
+        addr_D = self.xor(self.Td[t1], t2)      # a1prime in the paper
+        
+        while int(addr_D) != 0:
+            # 3a
+            deletenode, r = self.split(self.Ad[int(addr_D)], -self.k)
+            deletenode = self.xor(deletenode, self.H2(t3, r))
+            a1, a2, a3, a4, a5, a6, mu = self.parsedeletenode(deletenode)
     
-    
+            # 3b
+            self.Ad[int(addr_D)] = os.urandom(6 * self.addr_size + self.k)
+            
+            # 3c + 3d + 3e
+            phi = self.split(self.Ts['free'], self.addr_size)[0]
+            self.Ts['free'] = a4 + zerostring
+            self.As[int(a4)] = phi + addr_D      # aiprime in paper
+            
+            # 3f
+            self.As[int(a5)] = self.xor(self.As[int(a5)], zerostring + self.xor(a4, a6) + \
+                               "\0" * self.k)
+
+            self.Ad[int(a2)] = self.xor(self.Ad[int(a2)], 2 * zerostring + \
+                               self.xor(addr_D, a2) + 2 * zerostring + self.xor(a4, a5) + \
+                               zerostring + 2 * self.k * "\0")
+            
+            # 3g
+            self.Ad[int(a3)] = self.xor(self.Ad[int(a3)], zerostring + self.xor(addr_D, a2) + \
+                               2 * zerostring + self.xor(a4, a5) + zerostring + 2 * self.k * "\0")
+            
+            addr_D = a1
+
+        del self.Td[t1]
+
+
 if __name__ == "__main__":
     dsse = DSSEServer(32, 5)
     

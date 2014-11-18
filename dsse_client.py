@@ -98,10 +98,9 @@ class DSSEClient:
         return (Ff.digest(), Gfstring[:length], Pf.digest(), id.digest())
 
 
-    # FIXME: probably need to exclude zero, since it'd be interpreted as zerostring?
     def findusable(self, array):
         while True:
-            addr = random.randrange(len(array))
+            addr = random.randrange(1, len(array))
             if array[addr] is None:
                 break
         return addr
