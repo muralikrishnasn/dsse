@@ -145,7 +145,7 @@ class DSSEClient:
                 dst.truncate()
                 
 
-    def xors(self, str1, str2):
+    def xor(self, str1, str2):
         # FIXME: this is for testing purposes and should be changed/removed for final
         if len(str1) != len(str2):
             print "Strings of unequal length: {} and {}".format(len(str1), len(str2))
@@ -202,7 +202,7 @@ class DSSEClient:
         Ts = {}
         Td = {}
         
-        # Steps 2 and 3, pass one
+        # Steps 2 and 3, interleaved
         for filename in files:
             (Ff, Gf, Pf, id) = self.filehashes(filename, addr_size)
             iddb[id] = filename
@@ -220,16 +220,16 @@ class DSSEClient:
 
                 if Fw in Ts:
                     Ts_entry = Ts[Fw]
-                    Ts_entry = self.xors(Ts_entry, Gw)
+                    Ts_entry = self.xor(Ts_entry, Gw)
                     addr_s_N1, addr_d_N1 = self.split(Ts_entry, self.addr_size)
                 else:
                     addr_s_N1 = zerostring
                     addr_d_N1 = zerostring
 
-                Ts_entry = self.xors(addr_As + addr_Ad, Gw)
+                Ts_entry = self.xor(addr_As + addr_Ad, Gw)
                 Ts[Fw] = Ts_entry
 
-                searchnode = self.xors(id + self.pad(addr_s_N1), H1) + r
+                searchnode = self.xor(id + self.pad(addr_s_N1), H1) + r
                 As[int(addr_As)] = searchnode
 
                 '''
@@ -244,7 +244,7 @@ class DSSEClient:
                 rp = os.urandom(self.k)
                 H2 = self.H2(Pf + rp)
 
-                deletenode = self.xors(deletenode, H2) + rp
+                deletenode = self.xor(deletenode, H2) + rp
                 
                 Ad[int(addr_Ad)] = deletenode
     
@@ -254,12 +254,12 @@ class DSSEClient:
                     prevD = Ad[int(addr_d_N1)]       
                     # set prevD's second field to addr_Ad and fifth field to addr_As
                     xorstring = zerostring + addr_Ad + 2 * zerostring + addr_As + zerostring + len(self.K1) * 2 * "\0"
-                    prevD = self.xors(prevD, xorstring)
+                    prevD = self.xor(prevD, xorstring)
                     Ad[int(addr_d_N1)] = prevD
                 
                 addr_d_D1 = addr_Ad     # update the temporary Td pointer
 
-            Td[Ff] = self.xors(addr_d_D1, Gf)
+            Td[Ff] = self.xor(addr_d_D1, Gf)
 
         # Step 4
         Fz = []
@@ -323,8 +323,8 @@ class DSSEClient:
             Pw = self.P(w)
             H1 = self.H1(Pw + r)
             H2 = self.H2(Pf + rp)
-            lamda_i = Fw + Gw + self.xors(id + zerostring, H1) + r
-                        + self.xors(6 * zerostring + Fw, H2) + rp
+            lamda_i = Fw + Gw + self.xor(id + zerostring, H1) + r + \
+                      self.xor(6 * zerostring + Fw, H2) + rp
         self.SKEEnc(filename)
         return (Ff, Gf, lamda)
 
