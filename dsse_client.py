@@ -9,7 +9,7 @@ import os
 import re
 import hashlib
 import random
-import pickle
+import cPickle as pickle
 import math
 import array
 import string

@@ -9,7 +9,7 @@ Server side implementation of DSSE
 import os
 import hashlib
 import random
-import pickle
+import cPickle as pickle
 import math
 import array
 
@@ -111,9 +111,15 @@ class DSSEServer:
         (t1, t2, t3) = tau
         if t1 not in self.Ts:
             return []
+        
+        print "Printing IDs:"
+        for id in self.iddb:
+            print "{}: {}".format(id.encode('hex'), self.iddb[id])
+        
         files = []
         addr_N, a1prime = self.split(self.xor(self.Ts[t1], t2), self.addr_size)
         while addr_N != "\0" * self.addr_size:
+            print "Files:",files
             N, r = self.split(self.As[int(addr_N)], 20 + self.addr_size)
             id, addr_N = self.split(self.xor(N, self.H1(t3 + r)), 20)
             files.append(self.iddb[id])
@@ -167,65 +173,57 @@ class DSSEServer:
         self.iddb[hashlib.sha1(filename).digest()] = filename
 
     
+    # Take a DelToken and use it in combination with the dual chain to delete all search
+    # nodes belonging to this file and update relevant pointers.
     def Del(self, tau):
-        print len(self.Ts)
+        # 1
         (t1, t2, t3, id) = tau
         if t1 not in self.Td:
-            return
-        
-        for element in self.iddb:
-            print self.iddb[element]
-        
+            return None
+    
         zerostring = "\0" * self.addr_size
-
-        addr_D = self.xor(self.Td[t1], t2)      # a1prime in the paper
-        nodecount = 0
-        while addr_D != zerostring:
+        longzeroes = "\0" * self.k
+    
+        # 2
+        aiprime = self.xor(self.Td[t1], t2)     # at this point considered a1prime
+    
+        while aiprime != zerostring:
             # 3a
-            nodecount += 1
-            print addr_D.encode('hex')
-            deletenode, r = self.split(self.Ad[int(addr_D)], -self.k)
+            deletenode, r = self.split(self.Ad[int(aiprime)], -self.k)
             deletenode = self.xor(deletenode, self.H2(t3 + r))
             a1, a2, a3, a4, a5, a6, mu = self.parsedeletenode(deletenode)
-            # 3b
-            self.Ad[int(addr_D)] = os.urandom(6 * self.addr_size + self.k)
-            
-            # 3c + 3d + 3e
-            phi = self.split(self.Ts['free'], self.addr_size)[0]
-            self.Ts['free'] = a4 + zerostring
-            self.As[int(a4)] = phi + addr_D      # aiprime in paper
-
-            # 3f
-            if a5 != zerostring:
-                print "a6:", a6.encode('hex') 
-                self.As[int(a5)] = self.xor(self.As[int(a5)], 20 * "\0" + self.xor(a4, a6) + \
-                                   "\0" * self.k)
-            elif a6 != zerostring:
-                self.Ts[mu] = self.xor(self.Ts[mu], self.xor(a4, a6) + self.xor(addr_D, a3))
-            else:
-                del self.Ts[mu]
-
-            if a2 != zerostring:
-                self.Ad[int(a2)] = self.xor(self.Ad[int(a2)], 2 * zerostring + \
-                                   self.xor(addr_D, a3) + 2 * zerostring + \
-                                   self.xor(a4, a5) + 2 * self.k * "\0")
-
-            # 3g
-            if a3 != zerostring:
-                self.Ad[int(a3)] = self.xor(self.Ad[int(a3)], zerostring + self.xor(addr_D, a2) + \
-                                   2 * zerostring + self.xor(a4, a5) + zerostring + 2 * self.k * "\0")
         
-            addr_D = a1
-
-        idtodelete = self.iddb[id]  # this is a SHA1 hash of the filename. We don't know
-                                    # all the filenames, so we let the caller worry about it.
+            # 3b
+            self.Ad[int(aiprime)] = os.urandom(6 * self.addr_size + 2 * self.k)
+        
+            # 3c
+            phi = self.split(self.Ts['free'], self.addr_size)[0]
+        
+            # 3d
+            self.Ts['free'] = a4 + zerostring
+        
+            # 3e
+            self.As[int(a4)] = phi + aiprime
+    
+            # 3f
+            if a5 == zerostring and a6 == zerostring:   # only node in the Ts list
+                del self.Ts[mu]
+            elif a5 == zerostring:  # First node in the Ts list, update Ts homomorphically
+                self.Ts[mu] = self.xor(self.Ts[mu], self.xor(a4, a6) + self.xor(aiprime, a3))
+            else:   # Not first node, perhaps last. Update N-1.
+                self.As[int(a5)] = self.xor(self.As[int(a5)], 20 * "\0" + self.xor(a4, a6) + longzeroes)
+                self.Ad[int(a2)] = self.xor(self.Ad[int(a2)], 2 * zerostring + self.xor(aiprime, a3) + 2 * zerostring + self.xor(a4, a6) + 2 * longzeroes)
+        
+            # 3g
+            if a3 != zerostring:    # can only update N+1's dual if it exists
+                self.Ad[int(a3)] = self.xor(self.Ad[int(a3)], zerostring + self.xor(aiprime, a2) + 2 * zerostring + self.xor(a4, a5) + zerostring + 2 * longzeroes)
+        
+            # 3h
+            aiprime = a1
+        
+        # 5
         del self.Td[t1]
-        del self.iddb[id]
-        print len(self.Ts)
-        return idtodelete
+    
+        # 4
+        return self.iddb.pop(id)
 
-if __name__ == "__main__":
-    dsse = DSSEServer(32, 5)
-    
-    
-    
