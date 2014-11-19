@@ -52,22 +52,21 @@ class DSSEServer:
         return lhs, rhs
 
 
+    def Hx(self, data, length):
+        hash = hashlib.sha512(data)
+        Hx = hash.digest()
+        while length > len(Hx):
+            hash.update(data)
+            Hx += hash.digest()
+        return Hx[:length]    
+
+
     def H1(self, data):
-        hash = hashlib.sha512("4f6a3f7e2ea5729b7a02549f96df9fec" + data)
-        H1 = hash.digest()
-        while 20 + self.addr_size > len(H1):
-            hash.update(data)
-            H1 += hash.digest()
-        return H1[:20 + self.addr_size]
+        return self.Hx(data, 20 + self.addr_size)
 
 
-    def H2(self, data, length):
-        hash = hashlib.sha512("8546d8f066cc3a4715f377f40eb3f034" + data)
-        H2 = hash.digest()
-        while 6 * self.addr_size + self.k > len(H2):
-            hash.update(data)
-            H2 += hash.digest()
-        return H2[:6 * self.addr_size + self.k]
+    def H2(self, data):
+        return self.Hx(data, 6 * self.addr_size + self.k)
 
 
     def parselamda(self, lamda):
@@ -116,11 +115,11 @@ class DSSEServer:
         return files        
 
 
-    def Add(self, tau):
+    def Add(self, tau, filename):
         (t1, t2, lamda) = tau
         if t1 in Td:
             return      # file ID already in the database, let's go home
-            
+
         zerostring = "\0" * self.addr_size
         prev_phistar = self.pad(0)
         for L_i in lamda:
@@ -153,7 +152,10 @@ class DSSEServer:
         
         # 2h
         Td[t1] = self.xor(prev_phistar, t2)
-        # Step 3 is performed out-of-band by simply storing a file. Caller needs to do this.
+        
+        # 3 Add filename to the iddb. Actually adding the file is done out-of-band by
+        # simply storing the file with the other encrypted files.
+        iddb[shalib.sha1(filename).digest()] = filename
 
     
     def Del(self, tau):
@@ -167,7 +169,7 @@ class DSSEServer:
         while int(addr_D) != 0:
             # 3a
             deletenode, r = self.split(self.Ad[int(addr_D)], -self.k)
-            deletenode = self.xor(deletenode, self.H2(t3, r))
+            deletenode = self.xor(deletenode, self.H2(t3 + r))
             a1, a2, a3, a4, a5, a6, mu = self.parsedeletenode(deletenode)
     
             # 3b

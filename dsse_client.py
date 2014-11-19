@@ -59,25 +59,21 @@ class DSSEClient:
         return hashlib.sha256(self.K3 + data).digest()
     
 
-    # FIXME: it doesn't work to add the secret keys since server needs H1, too.
-    #        So, do we want/need this static seed at all?
+    def Hx(self, data, length):
+        hash = hashlib.sha512(data)
+        Hx = hash.digest()
+        while length > len(Hx):
+            hash.update(data)
+            Hx += hash.digest()
+        return Hx[:length]    
+
+
     def H1(self, data):
-        hash = hashlib.sha512("4f6a3f7e2ea5729b7a02549f96df9fec" + data)
-        H1 = hash.digest()
-        while 20 + self.addr_size > len(H1):
-            hash.update(data)
-            H1 += hash.digest()
-        return H1[:20 + self.addr_size]
-        
-    
-    # FIXME: see H1
-    def H2(self, data, length):
-        hash = hashlib.sha512("8546d8f066cc3a4715f377f40eb3f034" + data)
-        H2 = hash.digest()
-        while 6 * self.addr_size + self.k > len(H2):
-            hash.update(data)
-            H2 += hash.digest()
-        return H2[:6 * self.addr_size + self.k]
+        return self.Hx(data, 20 + self.addr_size)
+
+
+    def H2(self, data):
+        return self.Hx(data, 6 * self.addr_size + self.k)
 
 
     def filehashes(self, filename, length):
