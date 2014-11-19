@@ -94,11 +94,19 @@ class DSSEClient:
 
     def findusable(self, array):
         while True:
+            rndbytes = int(math.ceil(math.log(len(array), 256)))
+            addr = (int(os.urandom(rndbytes).encode('hex'), 16) % (len(array) - 2)) + 1
+            if array[addr] is None:
+                return addr
+    
+    '''
+    def findusable(self, array):
+        while True:
             addr = random.randrange(1, len(array))
             if array[addr] is None:
                 break
         return addr
-
+    '''
 
     # File encryption is done with AES because it is probably the best-known and most-vetted
     # symmetric key algorithm available today. We employ PyCrypto to do the heavy lifting.

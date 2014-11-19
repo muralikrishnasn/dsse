@@ -12,14 +12,22 @@ if __name__ == "__main__":
     server = dsse_server.DSSEServer()
     client.set_address_size(server.get_address_size())
 
+    print "searching Margaret"
     token1 = client.SrchToken("Margaret")
     print server.Search(token1)
-    
+
+    print "searching life"
     token2 = client.SrchToken("life")
     print server.Search(token2)
-    
+
+    print "searching nonviolence"
     token3 = client.SrchToken("nonviolence")
     print server.Search(token3)
-    
+
+    print "searching glockenspiel"
     token4 = client.SrchToken("glockenspiel")
     print server.Search(token4)
+
+    print "searching luminosity"
+    token5 = client.SrchToken("luminosity")
+    print server.Search(token5)

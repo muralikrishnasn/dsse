@@ -126,13 +126,11 @@ class DSSEServer:
             return      # file ID already in the database, let's go home
 
         zerostring = "\0" * self.addr_size
-        prev_phistar = self.pad("\0")
-        lamdacount = 0
+        prev_phistar = zerostring
         for L_i in lamda:
             Fw, Gw, As_entry, r, Ad_entry, rp = self.parselamda(L_i)    # Corresponding to L_i[x]
 
             # 2a
-            lamdacount += 1
             phi = self.split(self.Ts['free'], self.addr_size)[0]
             prev_phi, phistar = self.split(self.As[int(phi)], self.addr_size)
 
@@ -157,7 +155,9 @@ class DSSEServer:
                 self.Ad[int(a1star)] = self.xor(self.Ad[int(a1star)], zerostring + phistar + 2 * zerostring + phi + zerostring + "\0" * self.k * 2)
 
             # 2g
-            self.Ad[int(phistar)] = self.xor(Ad_entry, prev_phistar + zerostring + a1star + phi + zerostring + a1 + Fw) + rp
+            self.Ad[int(phistar)] = self.xor(Ad_entry, prev_phistar + zerostring + a1star + phi + zerostring + a1 + "\0" * self.k) + rp
+            
+            prev_phistar = phistar
         
         # 2h
         self.Td[t1] = self.xor(prev_phistar, t2)
@@ -168,22 +168,25 @@ class DSSEServer:
 
     
     def Del(self, tau):
+        print len(self.Ts)
         (t1, t2, t3, id) = tau
         if t1 not in self.Td:
             return
         
+        for element in self.iddb:
+            print self.iddb[element]
+        
         zerostring = "\0" * self.addr_size
 
         addr_D = self.xor(self.Td[t1], t2)      # a1prime in the paper
-        
-        
-        
+        nodecount = 0
         while addr_D != zerostring:
             # 3a
+            nodecount += 1
+            print addr_D.encode('hex')
             deletenode, r = self.split(self.Ad[int(addr_D)], -self.k)
             deletenode = self.xor(deletenode, self.H2(t3 + r))
             a1, a2, a3, a4, a5, a6, mu = self.parsedeletenode(deletenode)
-    
             # 3b
             self.Ad[int(addr_D)] = os.urandom(6 * self.addr_size + self.k)
             
@@ -191,18 +194,26 @@ class DSSEServer:
             phi = self.split(self.Ts['free'], self.addr_size)[0]
             self.Ts['free'] = a4 + zerostring
             self.As[int(a4)] = phi + addr_D      # aiprime in paper
-            
-            # 3f
-            self.As[int(a5)] = self.xor(self.As[int(a5)], zerostring + self.xor(a4, a6) + \
-                               "\0" * self.k)
 
-            self.Ad[int(a2)] = self.xor(self.Ad[int(a2)], 2 * zerostring + \
-                               self.xor(addr_D, a2) + 2 * zerostring + self.xor(a4, a5) + \
-                               zerostring + 2 * self.k * "\0")
-        
+            # 3f
+            if a5 != zerostring:
+                print "a6:", a6.encode('hex') 
+                self.As[int(a5)] = self.xor(self.As[int(a5)], 20 * "\0" + self.xor(a4, a6) + \
+                                   "\0" * self.k)
+            elif a6 != zerostring:
+                self.Ts[mu] = self.xor(self.Ts[mu], self.xor(a4, a6) + self.xor(addr_D, a3))
+            else:
+                del self.Ts[mu]
+
+            if a2 != zerostring:
+                self.Ad[int(a2)] = self.xor(self.Ad[int(a2)], 2 * zerostring + \
+                                   self.xor(addr_D, a3) + 2 * zerostring + \
+                                   self.xor(a4, a5) + 2 * self.k * "\0")
+
             # 3g
-            self.Ad[int(a3)] = self.xor(self.Ad[int(a3)], zerostring + self.xor(addr_D, a2) + \
-                               2 * zerostring + self.xor(a4, a5) + zerostring + 2 * self.k * "\0")
+            if a3 != zerostring:
+                self.Ad[int(a3)] = self.xor(self.Ad[int(a3)], zerostring + self.xor(addr_D, a2) + \
+                                   2 * zerostring + self.xor(a4, a5) + zerostring + 2 * self.k * "\0")
         
             addr_D = a1
 
@@ -210,6 +221,7 @@ class DSSEServer:
                                     # all the filenames, so we let the caller worry about it.
         del self.Td[t1]
         del self.iddb[id]
+        print len(self.Ts)
         return idtodelete
 
 if __name__ == "__main__":
