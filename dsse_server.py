@@ -11,6 +11,7 @@ import hashlib
 import random
 import pickle
 import math
+import array
 
 class DSSEServer:
 
@@ -70,8 +71,8 @@ class DSSEServer:
 
 
     def parselamda(self, lamda):
-        Fw, lamda = self.split(lamda, self.addr_size)
-        Gw, lamda = self.split(lamda, self.addr_size)
+        Fw, lamda = self.split(lamda, self.k)
+        Gw, lamda = self.split(lamda, 2 * self.addr_size)
         As_entry, lamda = self.split(lamda, 20 + self.addr_size)
         r, lamda = self.split(lamda, self.k)
         Ad_entry, rp = self.split(lamda, 6 * self.addr_size + self.k)
@@ -92,7 +93,7 @@ class DSSEServer:
         return str(addr).zfill(self.addr_size)
 
 
-    def __init__(self, k, addr_size):
+    def __init__(self, k = 32):
         self.k = k
         self.As = pickle.load(open("as.db", 'rb'))
         self.Ad = pickle.load(open("ad.db", 'rb'))
@@ -101,61 +102,69 @@ class DSSEServer:
         self.iddb = pickle.load(open("id.db", 'rb'))
         self.addr_size = int(math.ceil(math.log(len(self.As), 10)))
 
+
+    def get_address_size(self):
+        return self.addr_size
+
     
     def Search(self, tau):
         (t1, t2, t3) = tau
         if t1 not in self.Ts:
             return []
         files = []
-        addr_N, a1prime = self.split(self.xor(Ts[t1], t2), self.addr_size)
-        while int(addr_N) != 0:
-            N, r = self.split(As[int(addr_N)], 20 + self.addr_size)
-            id, addr_N = self.split(self.xor(N, self.H1(t3, r)), 20)
+        addr_N, a1prime = self.split(self.xor(self.Ts[t1], t2), self.addr_size)
+        while addr_N != "\0" * self.addr_size:
+            N, r = self.split(self.As[int(addr_N)], 20 + self.addr_size)
+            id, addr_N = self.split(self.xor(N, self.H1(t3 + r)), 20)
             files.append(self.iddb[id])
         return files        
 
 
     def Add(self, tau, filename):
         (t1, t2, lamda) = tau
-        if t1 in Td:
+        if t1 in self.Td:
             return      # file ID already in the database, let's go home
 
         zerostring = "\0" * self.addr_size
-        prev_phistar = self.pad(0)
+        prev_phistar = self.pad("\0")
+        lamdacount = 0
         for L_i in lamda:
             Fw, Gw, As_entry, r, Ad_entry, rp = self.parselamda(L_i)    # Corresponding to L_i[x]
 
             # 2a
+            lamdacount += 1
             phi = self.split(self.Ts['free'], self.addr_size)[0]
-            # Fetch entry in freelist, remove padding, split into both entries
-            prev_phi, phistar = self.split(As[int(phi)], self.addr_size)
-            
+            prev_phi, phistar = self.split(self.As[int(phi)], self.addr_size)
+
             # 2b
-            Ts['free'] = prev_phi + zerostring
+            self.Ts['free'] = prev_phi + zerostring
 
             # 2c
-            a1, a1star = self.split(self.xor(self.Ts[Fw], Gw), self.addr_size)
+            if Fw in self.Ts:
+                a1, a1star = self.split(self.xor(self.Ts[Fw], Gw), self.addr_size)
+            else:
+                a1 = zerostring
+                a1star = zerostring
             
             # 2d
-            self.As[int(phi)] = self.xor(As_entry, zerostring + self.pad(a1)) + r
+            self.As[int(phi)] = self.xor(As_entry, 20 * "\0" + self.pad(a1)) + r
             
             # 2e
             self.Ts[Fw] = self.xor(phi + phistar, Gw)
             
             # 2f
-            self.Ad[int(a1star)] = self.xor(self.Ad[int(a1star)], zerostring + phistar + \
-                              2 * zerostring + phi + zerostring + + "\0" * self.k * 2)
+            if a1star != zerostring:
+                self.Ad[int(a1star)] = self.xor(self.Ad[int(a1star)], zerostring + phistar + 2 * zerostring + phi + zerostring + "\0" * self.k * 2)
 
             # 2g
-            self.Ad[int(phistar)] = self.xor(Ad_entry, prev_phistar + zerostring + a1star + \
-                               phi + zerostring + a1 + Fw) + rp
+            self.Ad[int(phistar)] = self.xor(Ad_entry, prev_phistar + zerostring + a1star + phi + zerostring + a1 + Fw) + rp
         
         # 2h
-        Td[t1] = self.xor(prev_phistar, t2)
+        self.Td[t1] = self.xor(prev_phistar, t2)
         
         # 3 Add filename to the iddb. Actually adding the file is done out-of-band by
         # simply storing the file with the other encrypted files.
-        iddb[shalib.sha1(filename).digest()] = filename
+        self.iddb[hashlib.sha1(filename).digest()] = filename
 
     
     def Del(self, tau):
@@ -164,9 +173,12 @@ class DSSEServer:
             return
         
         zerostring = "\0" * self.addr_size
+
         addr_D = self.xor(self.Td[t1], t2)      # a1prime in the paper
         
-        while int(addr_D) != 0:
+        
+        
+        while addr_D != zerostring:
             # 3a
             deletenode, r = self.split(self.Ad[int(addr_D)], -self.k)
             deletenode = self.xor(deletenode, self.H2(t3 + r))
@@ -187,11 +199,11 @@ class DSSEServer:
             self.Ad[int(a2)] = self.xor(self.Ad[int(a2)], 2 * zerostring + \
                                self.xor(addr_D, a2) + 2 * zerostring + self.xor(a4, a5) + \
                                zerostring + 2 * self.k * "\0")
-            
+        
             # 3g
             self.Ad[int(a3)] = self.xor(self.Ad[int(a3)], zerostring + self.xor(addr_D, a2) + \
                                2 * zerostring + self.xor(a4, a5) + zerostring + 2 * self.k * "\0")
-            
+        
             addr_D = a1
 
         idtodelete = self.iddb[id]  # this is a SHA1 hash of the filename. We don't know

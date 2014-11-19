@@ -76,7 +76,7 @@ class DSSEClient:
         return self.Hx(data, 6 * self.addr_size + self.k)
 
 
-    def filehashes(self, filename, length):
+    def filehashes(self, filename):
         id = hashlib.sha1(filename)     # Only used to identify file, no cryptographic use
         Ff = hashlib.sha256(self.K1)
         Gf = hashlib.sha256(self.K2)
@@ -87,9 +87,9 @@ class DSSEClient:
                 Gf.update(chunk)
                 Pf.update(chunk)
         Gfstring = Gf.digest()
-        while length > len(Gfstring):
+        while self.addr_size > len(Gfstring):
             Gfstring += Gf.update(self.K2).digest()
-        return (Ff.digest(), Gfstring[:length], Pf.digest(), id.digest())
+        return (Ff.digest(), Gfstring[:self.addr_size], Pf.digest(), id.digest())
 
 
     def findusable(self, array):
@@ -162,7 +162,7 @@ class DSSEClient:
         return lhs, rhs
         
 
-    def __init__(self, k, z):
+    def __init__(self, k = 32, z = 100000):
         self.K1 = 0
         self.K2 = 0
         self.K3 = 0
@@ -170,7 +170,25 @@ class DSSEClient:
         self.k = k
         self.z = z
         self.id_size = 20       # SHA1 is used for file ID and is 20 bytes long
+        self.addr_size = 0
     
+    
+    def importkeys(self, keys):
+        self.K1 = keys[0]
+        self.K2 = keys[1]
+        self.K3 = keys[2]
+        self.K4 = keys[3]
+        self.k = len(self.K1)
+
+    
+    # Only export keys /after/ Enc, since addr_size is unknown otherwise
+    def exportkeys(self):
+        return (self.K1, self.K2, self.K3, self.K4)
+
+
+    def set_address_size(self, addr_size):
+        self.addr_size = addr_size 
+
 
     def Gen(self):
         self.K1 = os.urandom(self.k)
@@ -181,7 +199,6 @@ class DSSEClient:
         return self.keys
 
 
-    # Does it make sense to refactor this beast?
     def Enc(self, files):
         bytes = self.totalsize(files)
         iddb = {}
@@ -197,7 +214,7 @@ class DSSEClient:
         
         # Steps 2 and 3, interleaved
         for filename in files:
-            (Ff, Gf, Pf, id) = self.filehashes(filename, addr_size)
+            (Ff, Gf, Pf, id) = self.filehashes(filename)
             iddb[id] = filename
             
             addr_d_D1 = zerostring      # Temporary Td pointer to build Di chain
@@ -247,24 +264,27 @@ class DSSEClient:
             Td[Ff] = self.xor(addr_d_D1, Gf)
 
         # Step 4
-        Fz = []
-        Fpz = []
+        prev_free = zerostring
         for idx in range(self.z):
-            Fz.append(self.findusable(As))
-            Fpz.append(self.findusable(Ad))
-        Ts['free'] = self.pad(Fz[-1]) + zerostring
-        
-        # Supposed to go from Fz down to F1 but it's a random selection so it's the same.
-        for idx in range(len(Fz) - 1):
-            As[Fz[idx]] = self.pad(Fz[idx + 1]) + self.pad(Fpz[idx])
-        As[Fz[-1]] = zerostring + self.pad(Fpz[-1])
+            free = self.findusable(As)
+            free_dual = self.findusable(Ad)
+            As[free] = self.pad(prev_free) + self.pad(free_dual)
+            prev_free = free
+            Ad[free_dual] = zerostring
+        Ts['free'] = self.pad(prev_free) + zerostring
 
         # Step 5
+        Ad_empty = 0
+        As_empty = 0
         for idx in range(len(As)):
             if As[idx] is None:
                 As[idx] = os.urandom(2 * addr_size)
+                As_empty += 1
             if Ad[idx] is None:
                 Ad[idx] = os.urandom(6 * addr_size + 2 * self.k)
+                Ad_empty += 1
+        
+        print "Total: {}, As_empty: {}, Ad_empty: {}".format(len(Ad), As_empty, Ad_empty)
 
         # Step 6
         for filename in files:
@@ -287,7 +307,6 @@ class DSSEClient:
             pickle.dump(iddb, IDdb)
 
 
-    # TODO: do we always have the addr_size instantiated?
     def SrchToken(self, w):
         return (self.F(w), self.G(w), self.P(w))
 
@@ -309,6 +328,7 @@ class DSSEClient:
             H2 = self.H2(Pf + rp)
             lamda_i = Fw + Gw + self.xor(id + zerostring, H1) + r + \
                       self.xor(6 * zerostring + Fw, H2) + rp
+            lamda.append(lamda_i)
         self.SKEEnc(filename)
         return (Ff, Gf, lamda)
 
@@ -320,10 +340,3 @@ class DSSEClient:
     def Dec(self, filename):
         self.SKEDec(filename)
 
-
-if __name__ == "__main__":
-    dsse = DSSEClient(32, 100)
-    dsse.Gen()
-    dsse.Enc(['file1', 'file2'])
-    dsse.Dec('file1.enc')
-    
