@@ -2,9 +2,11 @@
 # -*- coding: utf-8 -*-
 
 
-"""
+'''
 Server side implementation of DSSE
-"""
+'''
+
+# TODO: xor, split, Hx and pad might be transferred to a common file with client
 
 import os
 import hashlib
@@ -15,7 +17,9 @@ import array
 
 class DSSEServer:
 
-    # After the client is done mutating the databases they should be written back to file
+    # After the client is done mutating the databases they should be written back to file.
+    # Caller is responsible for deciding when writes need to happen since it's too expensive
+    # to write after every mutation, especially in a series of events.
     def updatedatabases(self):
         with open("as.db", "wb") as Asdb:
             pickle.dump(self.As, Asdb)
@@ -32,9 +36,9 @@ class DSSEServer:
         with open("id.db", "wb") as IDdb:
             pickle.dump(self.iddb, IDdb)
 
-
+    # xor, split, Hx, H(1,2) and pad are identical to the versions in the client
     def xor(self, str1, str2):
-        # FIXME: this is for testing purposes and should be changed/removed for final
+        # FIXME: this is for testing purposes and should be removed for publication
         if len(str1) != len(str2):
             print "Strings of unequal length: {} and {}".format(len(str1), len(str2))
             test = 0/0
@@ -63,17 +67,21 @@ class DSSEServer:
 
 
     def H1(self, data):
-        return self.Hx(data, 20 + self.addr_size)
+        return self.Hx(data, self.id_size + self.addr_size)
 
 
     def H2(self, data):
         return self.Hx(data, 6 * self.addr_size + self.k)
 
 
+    def pad(self, addr):
+        return str(addr).zfill(self.addr_size)
+
+
     def parselamda(self, lamda):
         Fw, lamda = self.split(lamda, self.k)
         Gw, lamda = self.split(lamda, 2 * self.addr_size)
-        As_entry, lamda = self.split(lamda, 20 + self.addr_size)
+        As_entry, lamda = self.split(lamda, self.id_size + self.addr_size)
         r, lamda = self.split(lamda, self.k)
         Ad_entry, rp = self.split(lamda, 6 * self.addr_size + self.k)
         return Fw, Gw, As_entry, r, Ad_entry, rp
@@ -89,9 +97,6 @@ class DSSEServer:
         return a1, a2, a3, a4, a5, a6, mu
 
 
-    def pad(self, addr):
-        return str(addr).zfill(self.addr_size)
-
 
     def __init__(self, k = 32):
         self.k = k
@@ -101,32 +106,36 @@ class DSSEServer:
         self.Td = pickle.load(open("td.db", 'rb'))
         self.iddb = pickle.load(open("id.db", 'rb'))
         self.addr_size = int(math.ceil(math.log(len(self.As), 10)))
+        self.id_size = 20   # SHA1 used for file ID. Currently not changeable.
 
 
+    # Using this, clients can determine the size of their token elements without having
+    # to keep track of it "at home".
     def get_address_size(self):
         return self.addr_size
 
     
     def Search(self, tau):
+        # 1
         (t1, t2, t3) = tau
         if t1 not in self.Ts:
             return []
-        
-        print "Printing IDs:"
-        for id in self.iddb:
-            print "{}: {}".format(id.encode('hex'), self.iddb[id])
-        
+
         files = []
+        # 2
         addr_N, a1prime = self.split(self.xor(self.Ts[t1], t2), self.addr_size)
+        
+        # 3, 4
         while addr_N != "\0" * self.addr_size:
-            print "Files:",files
-            N, r = self.split(self.As[int(addr_N)], 20 + self.addr_size)
-            id, addr_N = self.split(self.xor(N, self.H1(t3 + r)), 20)
+            N, r = self.split(self.As[int(addr_N)], self.id_size + self.addr_size)
+            id, addr_N = self.split(self.xor(N, self.H1(t3 + r)), self.id_size)
+            # 5
             files.append(self.iddb[id])
         return files        
 
 
     def Add(self, tau, filename):
+        # 1
         (t1, t2, lamda) = tau
         if t1 in self.Td:
             return      # file ID already in the database, let's go home
@@ -151,7 +160,7 @@ class DSSEServer:
                 a1star = zerostring
             
             # 2d
-            self.As[int(phi)] = self.xor(As_entry, 20 * "\0" + self.pad(a1)) + r
+            self.As[int(phi)] = self.xor(As_entry, self.id_size * "\0" + self.pad(a1)) + r
             
             # 2e
             self.Ts[Fw] = self.xor(phi + phistar, Gw)
@@ -205,17 +214,17 @@ class DSSEServer:
             # 3e
             self.As[int(a4)] = phi + aiprime
     
-            # 3f
+            # 3f, this logic is missing in the paper but essential to bookkeeping
             if a5 == zerostring and a6 == zerostring:   # only node in the Ts list
                 del self.Ts[mu]
             elif a5 == zerostring:  # First node in the Ts list, update Ts homomorphically
                 self.Ts[mu] = self.xor(self.Ts[mu], self.xor(a4, a6) + self.xor(aiprime, a3))
-            else:   # Not first node, perhaps last. Update N-1.
+            else:   # Not first node, perhaps last but irrelevant here. Update N-1 and (N-1)*
                 self.As[int(a5)] = self.xor(self.As[int(a5)], 20 * "\0" + self.xor(a4, a6) + longzeroes)
                 self.Ad[int(a2)] = self.xor(self.Ad[int(a2)], 2 * zerostring + self.xor(aiprime, a3) + 2 * zerostring + self.xor(a4, a6) + 2 * longzeroes)
         
             # 3g
-            if a3 != zerostring:    # can only update N+1's dual if it exists
+            if a3 != zerostring:    # Not final node in list. Otherwise cannot update (N+1)*
                 self.Ad[int(a3)] = self.xor(self.Ad[int(a3)], zerostring + self.xor(aiprime, a2) + 2 * zerostring + self.xor(a4, a5) + zerostring + 2 * longzeroes)
         
             # 3h

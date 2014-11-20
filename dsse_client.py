@@ -17,7 +17,7 @@ from Crypto.Cipher import AES
 
 class DSSEClient:
 
-    # Enumerate the total size of the     
+    # Enumerate the total size of the plaintexts (paper uses |c| / 8 to guide array size) 
     def totalsize(self, files):
         sum = 0
         for file in files:
@@ -31,7 +31,7 @@ class DSSEClient:
     # This is the tokenizer. Replace this function whenever the input isn't text-based.
     def fbar(self, filename):
         fbar = []
-        # Match anything that isn't alphanumeric or space
+        # Match anything that isn't alphanumeric or space so only words separated by spaces are left
         stripper = re.compile(r'([^\s\w])+')
         with open(filename,'r') as f:
             for line in f:
@@ -43,6 +43,13 @@ class DSSEClient:
         return fbar
 
 
+    '''
+    The following functions up to and including filehashes() perform all the keyed hashing
+    on keywords and files, respectively. F, G and P are HMAC-SHA256 hashes, id is SHA1 and
+    H(1,2) are SHA512. Since G needs to be variable length to cover the dictionary entries
+    we feed the key and data into it repeatedly if needed to get the required output, ess-
+    entially using the algorithm as a stream cipher.
+    '''
     def F(self, data):
         return hashlib.sha256(self.K1 + data).digest()
     
@@ -69,7 +76,7 @@ class DSSEClient:
 
 
     def H1(self, data):
-        return self.Hx(data, 20 + self.addr_size)
+        return self.Hx(data, self.id_size + self.addr_size)
 
 
     def H2(self, data):
@@ -92,6 +99,9 @@ class DSSEClient:
         return (Ff.digest(), Gfstring[:self.addr_size], Pf.digest(), id.digest())
 
 
+    # FIXME: after demo time we should figure out why addresses appear to all be in a 
+    # very compressed range. Most likely either this or the commented out version below
+    # works fine and the problem is elsewhere.
     def findusable(self, array):
         while True:
             rndbytes = int(math.ceil(math.log(len(array), 256)))
@@ -108,7 +118,7 @@ class DSSEClient:
         return addr
     '''
 
-    # File encryption is done with AES because it is probably the best-known and most-vetted
+    # File encryption is done with AES because it is the best-known and most-vetted
     # symmetric key algorithm available today. We employ PyCrypto to do the heavy lifting.
     def SKEEnc(self, filename):
         iv = os.urandom(16)
@@ -120,6 +130,7 @@ class DSSEClient:
                     if len(chunk) != AES.block_size * 128:
                         break
                     dst.write(cipher.encrypt(chunk))
+                # Perform PKCS7 padding
                 if len(chunk) == AES.block_size * 128:
                     dst.write(cipher.encrypt(chr(16) * 16))
                 else:
@@ -139,15 +150,19 @@ class DSSEClient:
                 for chunk in iter(lambda: src.read(AES.block_size * 128), b''):
                     dst.write(cipher.decrypt(chunk))
 
-                # Remove padding
+                # Remove PKCS7 padding. No check is performed to see whether padding was
+                # correct, which is a possible TODO for publication.
                 dst.seek(-1, os.SEEK_END)
                 lastbyte = dst.read(1)
                 dst.seek(-int(lastbyte.encode('hex'), 16), os.SEEK_END)
                 dst.truncate()
                 
 
+    # Python only has built-in support to XOR numbers, so take a string, interpret it as
+    # a series of unsigned chars, XOR those and stitch back together.
+    # Could probably be done more efficiently, which is a TODO for publication.
     def xor(self, str1, str2):
-        # FIXME: this is for testing purposes and should be changed/removed for final
+        # TODO: this is for testing purposes and should be removed for publication
         if len(str1) != len(str2):
             print "Strings of unequal length: {} and {}".format(len(str1), len(str2))
             test = 0/0
@@ -177,7 +192,7 @@ class DSSEClient:
         self.K4 = 0
         self.k = k
         self.z = z
-        self.id_size = 20       # SHA1 is used for file ID and is 20 bytes long
+        self.id_size = 20       # SHA1 is used for file ID and is 20 bytes long. Currently not changeable
         self.addr_size = 0
     
     
@@ -207,6 +222,8 @@ class DSSEClient:
         return self.keys
 
 
+    # The biggest function here, with the least granular breakdown of steps. Inline comments
+    # provided where needed.
     def Enc(self, files):
         bytes = self.totalsize(files)
         iddb = {}
@@ -225,17 +242,18 @@ class DSSEClient:
             (Ff, Gf, Pf, id) = self.filehashes(filename)
             iddb[id] = filename
             
-            addr_d_D1 = zerostring      # Temporary Td pointer to build Di chain
+            addr_d_D1 = zerostring      # Temporary Td pointer to build Di chain. Will be updated in each word iteration below to point to the previous dual node
             
             for w in self.fbar(filename):
                 addr_As = self.pad(self.findusable(As))    # insert new node here
                 addr_Ad = self.pad(self.findusable(Ad))    # insert dual node here
-                r = os.urandom(self.k)
                 Fw = self.F(w)
                 Gw = self.G(w)
                 Pw = self.P(w)
+                r = os.urandom(self.k)
                 H1 = self.H1(Pw + r)
 
+                # Get pointers to first (dual) node in search list, which is zero for new words.
                 if Fw in Ts:
                     Ts_entry = Ts[Fw]
                     Ts_entry = self.xor(Ts_entry, Gw)
@@ -252,14 +270,11 @@ class DSSEClient:
 
                 deletenode = addr_d_D1 + zerostring + addr_d_N1 + addr_As + zerostring + addr_s_N1 + Fw
                 rp = os.urandom(self.k)
-                H2 = self.H2(Pf + rp)
-
-                deletenode = self.xor(deletenode, H2) + rp
-                
+                deletenode = self.xor(deletenode, self.H2(Pf + rp)) + rp
                 Ad[int(addr_Ad)] = deletenode
     
-                # We get the dual of N+1. From its perspective we are N-1.
-                # Then we update its values to point to us.
+                # We get the dual of N+1. From its perspective we are N-1. Then we update 
+                # its values to point to us. This is the crucial interleaving step.
                 if addr_d_N1 != zerostring:
                     prevD = Ad[int(addr_d_N1)]       
                     # set prevD's second field to addr_Ad and fifth field to addr_As
@@ -278,27 +293,27 @@ class DSSEClient:
             free_dual = self.findusable(Ad)
             As[free] = self.pad(prev_free) + self.pad(free_dual)
             prev_free = free
+            # the algo doesn't mention processing the free nodes in any way, even though
+            # Del() on the server does. Here we set them to zerostring to distinguish from
+            # None in step 5. Consistency is a TODO for publication.
             Ad[free_dual] = zerostring
         Ts['free'] = self.pad(prev_free) + zerostring
 
         # Step 5
-        Ad_empty = 0
-        As_empty = 0
         for idx in range(len(As)):
             if As[idx] is None:
                 As[idx] = os.urandom(2 * addr_size)
-                As_empty += 1
             if Ad[idx] is None:
                 Ad[idx] = os.urandom(6 * addr_size + 2 * self.k)
-                Ad_empty += 1
-        
-        print "Total: {}, As_empty: {}, Ad_empty: {}".format(len(Ad), As_empty, Ad_empty)
 
         # Step 6
         for filename in files:
             self.SKEEnc(filename)
 
-        # Step 7
+        # Step 7, instead of returning the databases to caller we write out to disk.
+        # Caller can now transport them to the server as files and have the server unpicle
+        # them. No integrity checks are performed, so if needed the caller should provide
+        # additional checking mechanisms.
         with open("as.db", "wb") as Asdb:
             pickle.dump(As, Asdb)
         
@@ -321,6 +336,8 @@ class DSSEClient:
 
     # The function should return the token and cf, but we have cf on disk. Caller can
     # decide how to transfer the ciphertext to the server.
+    # For each word a search and deletenode need to be generated. The server will update
+    # these with appropriate addresses homomorphically.
     def AddToken(self, filename):
         # Get ALL the hashes!
         (Ff, Gf, Pf, id) = self.filehashes(filename)
