@@ -138,7 +138,7 @@ class DSSEServer:
         # 1
         (t1, t2, lamda) = tau
         if t1 in self.Td:
-            return      # file ID already in the database, let's go home
+            return None      # file ID already in the database, let's go home
 
         zerostring = "\0" * self.addr_size
         prev_phistar = zerostring
@@ -180,6 +180,7 @@ class DSSEServer:
         # 3 Add filename to the iddb. Actually adding the file is done out-of-band by
         # simply storing the file with the other encrypted files.
         self.iddb[hashlib.sha1(filename).digest()] = filename
+        return filename
 
     
     # Take a DelToken and use it in combination with the dual chain to delete all search
